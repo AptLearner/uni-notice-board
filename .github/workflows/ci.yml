@@ -10,35 +10,51 @@ jobs:
   lint-and-build:
     runs-on: ubuntu-latest
     steps:
+      # Checkout repository code so we can run linters and build
       - uses: actions/checkout@v4
+      # Install npm dependencies required for linters and Parcel
       - name: Install Dependencies
         run: npm install
+      # Run HTMLHint on HTML files
       - name: HTMLHint
         run: npx htmlhint src/*.html
+      # Run Stylelint on CSS files
       - name: Stylelint
         run: npx stylelint styles/*.css
+      # Run Parcel build to produce the production `dist` files
       - name: Parcel Build
         run: npm run build
 
-  docker-build:
+  docker-build-and-push:
     needs: lint-and-build
     runs-on: ubuntu-latest
     steps:
+      # Checkout repository code so Docker build context contains the site
       - uses: actions/checkout@v4
+      # Validate that required Docker secrets are present before doing any work
+      - name: Validate Docker Secrets
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "ERROR: DOCKERHUB_USERNAME secret is missing or empty"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "ERROR: DOCKERHUB_TOKEN secret is missing or empty"
+            exit 1
+          fi
+          echo "Secrets validated successfully"
+      # Install npm dependencies (required if build step depends on them)
       - name: Install Dependencies
         run: npm install
+      # Run Parcel build to ensure `dist` directory is present for Docker
       - name: Parcel Build
         run: npm run build
+      # Login to Docker Hub using token via stdin piping
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+      # Build the Docker image and tag it for Docker Hub
       - name: Build Docker Image
         run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/uni-notice-board:latest .
-
-  docker-push:
-    needs: docker-build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Login and Push
-        run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/uni-notice-board:latest
+      # Push the tagged image to Docker Hub
+      - name: Push Docker Image
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/uni-notice-board:latest
